@@ -1,0 +1,14 @@
+{
+    "extends": "@tsconfig/node16/tsconfig.json",
+    "include": [
+        "./src/**/*",
+    ],
+    "compilerOptions": {
+        "outDir": "dist",
+        "sourceMap": true,
+        "typeRoots": [
+            "./node_modules/@types",
+            "./types"
+        ]
+    }
+}
