@@ -1,0 +1,95 @@
+name: Cloud Functions
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+  workflow_dispatch:
+
+concurrency: ${{ github.ref }}
+
+env:
+  ENV_KEY: env-vars
+  ENV_FILE: env.yaml
+  GCP_SA: bivuanem@voltaic-country-280607.iam.gserviceaccount.com
+
+jobs:
+  set-env:
+    runs-on: ubuntu-latest
+    outputs:
+      fn-name: ${{ steps.set-fn-name.outputs.fn-name }}
+    steps:
+      - if: github.ref_name == 'dev'
+        run: |
+          echo "FUNCTION_NAME=vuanem-firestore-to-bigquery-dev" >> $GITHUB_ENV
+
+      - if: github.ref_name == 'master'
+        run: |
+          echo "FUNCTION_NAME=vuanem-firestore-to-bigquery" >> $GITHUB_ENV
+
+      - id: set-fn-name
+        run: echo "::set-output name=fn-name::${{ env.FUNCTION_NAME}}"
+
+      - run: |
+          echo "TOKEN: ${{ secrets.TOKEN }}" >> ${{ env.ENV_FILE }}
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.ENV_KEY }}
+          path: ${{ env.ENV_FILE }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: set-env
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: ${{ env.ENV_KEY }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+
+      - run: npm ci
+
+      - run: tsc --project tsconfig.build.json
+
+      - run: |
+          cp package.json dist/package.json
+          cp package-lock.json dist/package-lock.json
+
+      - uses: google-github-actions/auth@v0
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v0
+
+      - run: >-
+          gcloud functions deploy ${{ needs.set-env.outputs.fn-name }}
+          --entry-point=main
+          --source=dist
+          --region=us-central1
+          --timeout=530
+          --memory=512MB
+          --runtime=nodejs16
+          --trigger-http
+          --no-user-output-enabled
+          --service-account=${{ env.GCP_SA }}
+          --env-vars-file=${{ env.ENV_FILE }}
+          --allow-unauthenticated
+
+  clean-up:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+    steps:
+      - run: echo "" > ${{ env.ENV_FILE }}
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.ENV_KEY }}
+          path: ${{ env.ENV_FILE }}
